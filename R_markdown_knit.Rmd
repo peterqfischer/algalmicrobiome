@@ -1,0 +1,429 @@
+---
+title: "Algal/microbial diversity"
+author: "Peter Fischer"
+date: "6 april 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load packages
+
+
+
+```{r}
+library(vegan)
+library(tidyverse)
+library(pheatmap)
+```
+
+## Obtain data
+
+Load data and rework them a bit so vegan can work with it. We also add metadata about algal diversity between samples and the season where each sample was taken.
+
+```{r}
+setwd("C:/Users/Peter/OneDrive - WageningenUR/fisch027/RData/Algae_paper")
+data <- read.table("data/rel_abundance-PETERPCv2.txt",header=T)
+row.names(data) <- data$Genus
+data <- data[,-1]
+data <- t(data)
+Algal_population <- c("Mixed",rep(c("Chlorella dominated"),6),"Mixed","Mixed")
+season <- c("Winter",rep(c("Spring"),3),rep(c("Summer"),3),"Autumn","Spring")
+sampling <- row.names(data)
+
+```
+
+
+## Visualization of data
+
+Now heatmaps in RStudio and markdown are a fickle thing, since graphs are limited to a certain size, which any decent heatmap always exceeds. Scaling down also isn't an option. What I generally do is fire up command line R in our server, then perform pheatmap there, where max plot size is much larger. You still might have to play with cell sizes though.
+
+
+```{r}
+pheatmap(t(data), cluster_cols = T,cluster_rows = F, cellwidth = 20,cellheight = 4)
+
+```
+
+## Visualization of selected data
+
+The larger the data, the less readable a heatmap becomes. Thus, average each genus relative abundance, sort by most abundant genera, then pick the 50 most abundant and create a more readable heatmap with that data. 
+
+```{r}
+data1 <- read.table("data/rel_abundance-PETERPCv2.txt",header=T)
+
+average <- rowMeans(data1[,2:10])
+data1 <- cbind(data1,average)
+data1 <- as_tibble(data1)
+data1 <- arrange(data1, desc(average))
+data1 <- as.data.frame(data1)
+row.names(data1) <- data1$Genus
+data1 <- data1[,-1]
+data1 <- data1[,-10]
+data1 <- data1[1:50,]
+
+pheatmap(data1, cluster_cols = T,cluster_rows = F, cellwidth = 20,cellheight = 4)
+```
+
+
+## NMDS 
+
+Here, we perform non-metric dimensional scaling on the bacterial population, inferring the influence of individual genera on the ordinal distribution of the sampling moments. A stressplot is created to check assumptions.
+
+```{r }
+nmds = metaMDS(data, distance = "bray")
+stressplot(nmds)
+plot(nmds)
+
+```
+
+## Visualization
+
+Vegan plotting is very limiting, so we extract the data and build plots in ggplot2
+
+```{r}
+data.scores = as.data.frame(scores(nmds))
+
+
+data.scores$Sampling <- sampling 
+data.scores$'algal population' <- Algal_population
+data.scores$Season <- season
+
+
+gg = ggplot(data.scores, aes(x = NMDS1, y = NMDS2)) + geom_point(aes(colour=season,shape=`algal population`),size=5) + geom_text(aes(label=Sampling),hjust=0.45, vjust=-0.85) +
+theme(axis.text.y = element_text(colour = "black", size = 12, face = "bold"), 
+axis.text.x = element_text(colour = "black", face = "bold", size = 12), 
+legend.text = element_text(size = 12, face ="bold", colour ="black"), 
+legend.position = "right", axis.title.y = element_text(face = "bold", size = 14), 
+axis.title.x = element_text(face = "bold", size = 14, colour = "black"), 
+legend.title = element_text(size = 14, colour = "black", face = "bold"), 
+panel.background = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 0.2),
+legend.key=element_blank()) + 
+labs(x = "NMDS1", y = "NMDS2")  
+
+gg  
+```
+
+## Statistics
+
+We calculate the statistical significance of influence of algal diversity and season on the bacterial diversity between sampling moments using ANOSIM.  
+
+```{r}
+m_com = as.matrix(data)
+ano_pop = anosim(m_com, Algal_population, distance = "bray", permutations = 9999)
+ano_pop
+ano_season = anosim(m_com, season, distance = "bray", permutations = 9999)
+ano_season
+```
+
+## Influence of environmental parameters
+First we need to load our metadata
+
+```{r}
+metadata <- read.table("data/metadata.txt",header=T)
+row.names(metadata) <- metadata$Stage
+metadata <- metadata[,-1]
+metadata <- t(metadata)
+
+### divide between environmental and biological parameters
+environmentaldata <- c(1,2,3,4,5,9,10,11,12)
+environmental <- metadata[,environmentaldata]
+
+biologicaldata <- c(6,7,8,13,14,15,16,17,18)
+biological <- metadata[,biologicaldata]
+```
+
+## Determine colinearity 
+
+Colinearity negatively influence statistical interference, thus this should be addressed first. It also slims your list of explanatory variables making your plots more agreeable.  
+
+```{r}
+panel.cor <- function(x, y, digits=2, prefix="", cex.cor) # to create variable for colinearity plot
+{
+  usr <- par("usr"); on.exit(par(usr))
+  par(usr = c(0, 1, 0, 1))
+  r <- abs(cor(x, y, use="complete.obs"))
+  txt <- format(c(r, 0.123456789), digits=digits)[1]
+  txt <- paste(prefix, txt, sep="")
+  if(missing(cex.cor)) cex <- 0.8/strwidth(txt)
+  
+  test <- cor.test(x,y)
+  # borrowed from printCoefmat
+  Signif <- symnum(test$p.value, corr = FALSE, na = FALSE,
+                   cutpoints = c(0, 0.05, 0.1, 1),
+                   symbols = c("*", ".", " "))
+  
+  text(0.5, 0.5, txt, cex = cex * r)
+  text(.8, .8, Signif, cex=cex, col=2)
+}
+```
+
+```{r}
+pairs(biological, lower.panel = panel.smooth, upper.panel = panel.cor)
+pairs(environmental,lower.panel=panel.smooth,upper.panel=panel.cor)
+```
+
+## RDA 
+Redundancy analysis is performed to assess the influence of individual environmental parameters on the bacterial diversity. First, we perform Hellinger transformation to give weight to zero value data (see Legendre & Legendre, 2001).
+
+Then, we perform RDA on the whole model to visualize the influence of parameters on ordination.
+
+```{r}
+hel.data <- decostand(data, "hellinger")
+
+rdadata <- as.data.frame(hel.data)
+rdaenv <- as.data.frame(environmental)
+rdabio <- as.data.frame(biological)
+
+var_rda <- rda(rdadata ~. , data= rdaenv, scale=T)
+plot(var_rda,scaling=1,type="p",cex=1,main="all species RDA scores")
+orditorp(var_rda,scaling=1,cex=1,display="sites",col="black")
+
+var_rda <- rda(rdadata ~. , data= rdabio, scale=T)
+plot(var_rda,scaling=1,type="p",cex=1,main="all species RDA scores")
+orditorp(var_rda,scaling=1,cex=1,display="sites",col="black")
+
+```
+
+## Statistical influence of each individual parameter
+
+This can also be done by a for loop, but for markdown viewing purposes it's easier to do it like this here. We perform anova on canonical axes (Legendre, Oksanen and ter Braak, 2011) 
+
+```{r environmental}
+var_rda_pars <- rda(hel.data ~ rdaenv[,1] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdaenv[,2] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdaenv[,3] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdaenv[,4] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdaenv[,5] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdaenv[,6] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdaenv[,7] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdaenv[,8] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdaenv[,9] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+```
+
+# biological parameters
+
+```{r biological}
+
+var_rda_pars <- rda(hel.data ~ rdabio[,1] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdabio[,2] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdabio[,3] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdabio[,4] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdabio[,5] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdabio[,6] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdabio[,7] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdabio[,8] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.data ~ rdabio[,9] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+```
+
+### Algae data
+
+We do the whole shebang again, this time with algal populations
+
+```{r}
+
+algaldata <- read.table("data/algae_abundance.txt",header=T)
+row.names(algaldata) <- algaldata$Genus
+algaldata <- algaldata[,-1]
+algaldata <- t(algaldata)
+season <- c("Winter",rep(c("Spring"),3),rep(c("Summer"),3),"Autumn","Spring")
+sampling <- row.names(data)
+
+```
+
+## Visualization with heatmaps
+
+```{r}
+pheatmap(t(algaldata), cluster_cols = T,cluster_rows = F, cellwidth = 20,cellheight = 8)
+```
+
+
+## NMDS
+
+```{r}
+nmds = metaMDS(algaldata, distance = "bray")
+stressplot(nmds)
+plot(nmds)
+
+data.scores = as.data.frame(scores(nmds))
+
+
+data.scores$Sampling <- sampling 
+data.scores$Season <- season
+
+
+gg = ggplot(data.scores, aes(x = NMDS1, y = NMDS2)) + geom_point(aes(colour=season),size=5) + geom_text(aes(label=Sampling),hjust=0.45, vjust=-0.85) +
+theme(axis.text.y = element_text(colour = "black", size = 12, face = "bold"), 
+axis.text.x = element_text(colour = "black", face = "bold", size = 12), 
+legend.text = element_text(size = 12, face ="bold", colour ="black"), 
+legend.position = "right", axis.title.y = element_text(face = "bold", size = 14), 
+axis.title.x = element_text(face = "bold", size = 14, colour = "black"), 
+legend.title = element_text(size = 14, colour = "black", face = "bold"), 
+panel.background = element_blank(), panel.border = element_rect(colour = "black", fill = NA, size = 0.2),
+legend.key=element_blank()) + 
+labs(x = "NMDS1", y = "NMDS2")  
+
+gg  
+```
+
+## Anosim
+
+Infer influence of season on diversity
+
+```{r}
+m_com = as.matrix(data)
+ano_season = anosim(m_com, season, distance = "bray", permutations = 9999)
+ano_season
+```
+
+## RDA
+
+```{r }
+
+hel.algaldata <- decostand(algaldata, "hellinger")
+rdaalgaldata <- as.data.frame(hel.algaldata)
+
+var_rda <- rda(rdaalgaldata ~. , data= rdaenv, scale=T)
+plot(var_rda,scaling=1,type="p",cex=1,main="all species RDA scores")
+orditorp(var_rda,scaling=1,cex=1,display="sites",col="black")
+
+var_rda <- rda(rdaalgaldata ~. , data= rdabio, scale=T)
+plot(var_rda,scaling=1,type="p",cex=1,main="all species RDA scores")
+orditorp(var_rda,scaling=1,cex=1,display="sites",col="black")
+```
+
+## Statistics on parameter influence
+
+```{r }
+var_rda_pars <- rda(hel.algaldata ~ rdaenv[,1] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdaenv[,2] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdaenv[,3] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdaenv[,4] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdaenv[,5] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdaenv[,6] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdaenv[,7] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdaenv[,8] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdaenv[,9] , data=rdaenv, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+```
+
+# biological parameters
+
+```{r }
+
+var_rda_pars <- rda(hel.algaldata ~ rdabio[,1] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdabio[,2] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdabio[,3] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdabio[,4] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdabio[,5] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdabio[,6] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdabio[,7] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdabio[,8] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+var_rda_pars <- rda(hel.algaldata ~ rdabio[,9] , data=rdabio, scale=TRUE)
+set.seed(111)
+anova.cca(var_rda_pars, step=1000)
+
+```
